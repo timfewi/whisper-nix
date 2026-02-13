@@ -11,25 +11,20 @@ let
   whisper-dictate = pkgs.writeShellScriptBin "whisper-dictate" (
     builtins.readFile ./whisper-dictate.sh
   );
-
-  download-model = pkgs.writeShellScriptBin "whisper-dictate-download-model" (
-    builtins.readFile ./download-model.sh
-  );
 in
 {
   # --- System packages --------------------------------------------------------
   environment.systemPackages = with pkgs; [
     # Core dependencies
-    whisper-cpp          # Speech-to-text engine
+    jq                   # Parse Groq JSON response
     ydotool              # Simulate keyboard input on Wayland
     pipewire             # Audio capture (pw-record)
     wl-clipboard         # Clipboard support (fallback mode)
     libnotify            # Desktop notifications (notify-send)
-    curl                 # Model download
+    curl                 # Groq API requests
 
     # Our scripts
     whisper-dictate
-    download-model
   ];
 
   # --- ydotool daemon ---------------------------------------------------------
@@ -38,20 +33,23 @@ in
     description = "ydotool daemon";
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
-      ExecStart = "${pkgs.ydotool}/bin/ydotoold";
+      RuntimeDirectory = "ydotoold";
+      ExecStart = "${pkgs.ydotool}/bin/ydotoold --socket-path=/run/ydotoold/socket --socket-perm=0666";
       Restart = "on-failure";
       # Grant access to the current user
-      # The socket will be at /run/.ydotoold/socket
+      # The socket will be at /run/ydotoold/socket
     };
   };
 
   # --- Environment variables --------------------------------------------------
   environment.sessionVariables = {
-    WHISPER_MODEL = "$HOME/.local/share/whisper-dictate/ggml-large-v3-turbo.bin";
-    WHISPER_LANG = "de";  # Change to "en" for English, "auto" for auto-detect
-    WHISPER_THREADS = "4"; # Adjust based on your CPU cores
+    WHISPER_LANG = "en";
+    GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+    GROQ_MODEL = "whisper-large-v3-turbo";
+    GROQ_RESPONSE_FORMAT = "json";
+    GROQ_TEMPERATURE = "0";
     # ydotool socket path
-    YDOTOOL_SOCKET = "/run/.ydotoold/socket";
+    YDOTOOL_SOCKET = "/run/ydotoold/socket";
   };
 
   # --- Permissions for ydotool ------------------------------------------------
