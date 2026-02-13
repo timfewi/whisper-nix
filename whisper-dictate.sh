@@ -241,7 +241,11 @@ stop_recording() {
 toggle() {
     # Use a lock file to prevent race conditions with rapid key presses
     exec 200>"$LOCK_FILE"
-    flock -n 200 || { echo "Another instance is running"; exit 1; }
+    flock -n 200 || {
+        notify "⏳ Previous dictation action is still finishing." "low"
+        echo "Another instance is running"
+        exit 1
+    }
 
     if is_recording; then
         stop_recording
@@ -252,7 +256,11 @@ toggle() {
 
 toggle_clipboard() {
     exec 200>"$LOCK_FILE"
-    flock -n 200 || { echo "Another instance is running"; exit 1; }
+    flock -n 200 || {
+        notify "⏳ Previous dictation action is still finishing." "low"
+        echo "Another instance is running"
+        exit 1
+    }
 
     if is_recording; then
         stop_recording_clipboard
@@ -304,7 +312,7 @@ stop_recording_clipboard() {
     fi
 
     # Copy to clipboard and paste
-    echo -n "$text" | wl-copy
+    echo -n "$text" | wl-copy 200>&-
     sleep 0.1
     paste_clipboard_with_fallback || true
 
