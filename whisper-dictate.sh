@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # =============================================================================
 # whisper-dictate.sh - Voice-to-text dictation for GNOME/Wayland on NixOS
 #
@@ -14,25 +13,23 @@
 set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
-# Language for transcription (ISO 639-1 code).
-# Common codes: en (English), de (German), fr (French), es (Spanish),
-#   it (Italian), pt (Portuguese), nl (Dutch), pl (Polish), ja (Japanese),
-#   zh (Chinese), ko (Korean), ru (Russian), ar (Arabic), hi (Hindi),
-#   sv (Swedish), uk (Ukrainian), tr (Turkish), cs (Czech), da (Danish),
-#   fi (Finnish). Full list: https://github.com/openai/whisper#available-models-and-languages
-# To change: set WHISPER_LANG in your environment or in whisper-dictate.nix.
-# To auto-detect language, set WHISPER_LANG="auto" (slightly slower).
+# Language for transcription (ISO 639-1 code, e.g. en, de, fr).
 LANGUAGE="${WHISPER_LANG:-en}"
 
 # Groq API configuration
 GROQ_API_URL="${GROQ_API_URL:-https://api.groq.com/openai/v1/audio/transcriptions}"
 GROQ_MODEL="${GROQ_MODEL:-whisper-large-v3-turbo}"
-GROQ_RESPONSE_FORMAT="${GROQ_RESPONSE_FORMAT:-text}"
 GROQ_TEMPERATURE="${GROQ_TEMPERATURE:-0}"
 GROQ_PROMPT="${GROQ_PROMPT:-}"
 
-# Notification timeout in milliseconds
-NOTIFY_TIMEOUT=2000
+# Error notification behavior (normal flow stays silent)
+ERROR_NOTIFY_ENABLED="${WHISPER_NOTIFY_ON_ERROR:-1}"
+ERROR_NOTIFY_TIMEOUT="${WHISPER_ERROR_NOTIFY_TIMEOUT:-2200}"
+
+# Paste pacing (helps when target app focus is not ready immediately)
+PASTE_INITIAL_DELAY="${WHISPER_PASTE_INITIAL_DELAY:-0.45}"
+PASTE_RETRY_DELAY="${WHISPER_PASTE_RETRY_DELAY:-0.12}"
+PASTE_ATTEMPTS="${WHISPER_PASTE_ATTEMPTS:-2}"
 
 # --- Internal paths (don't change) -------------------------------------------
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -40,6 +37,7 @@ PID_FILE="$RUNTIME_DIR/whisper-dictate.pid"
 AUDIO_FILE="$RUNTIME_DIR/whisper-dictate.wav"
 FLAC_FILE="$RUNTIME_DIR/whisper-dictate.flac"
 LOCK_FILE="$RUNTIME_DIR/whisper-dictate.lock"
+STATE_FILE="${WHISPER_STATE_FILE:-$RUNTIME_DIR/whisper-dictate.state}"
 MIN_WAV_BYTES=128
 
 # Curl timeout/retry settings
@@ -59,14 +57,29 @@ fi
 
 # --- Helper functions ---------------------------------------------------------
 
-notify() {
-    local urgency="${2:-normal}"
+set_state() {
+    printf '%s\n' "$1" > "$STATE_FILE"
+}
+
+notify_error() {
+    local message="$1"
+
+    echo "$message" >&2
+
+    if [[ "$ERROR_NOTIFY_ENABLED" != "1" ]]; then
+        return 0
+    fi
+
+    if ! command -v notify-send >/dev/null 2>&1; then
+        return 0
+    fi
+
     notify-send \
         --app-name="Whisper Dictate" \
-        --urgency="$urgency" \
-        --expire-time="$NOTIFY_TIMEOUT" \
-        --icon=audio-input-microphone \
-        "Whisper Dictate" "$1" 2>/dev/null || true
+        --urgency="critical" \
+        --expire-time="$ERROR_NOTIFY_TIMEOUT" \
+        --icon=dialog-error \
+        "Whisper Dictate" "$message" 2>/dev/null || true
 }
 
 is_recording() {
@@ -79,6 +92,7 @@ is_recording() {
 
     if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
         rm -f "$PID_FILE"
+        set_state "idle"
         return 1
     fi
 
@@ -86,6 +100,7 @@ is_recording() {
     args=$(ps -p "$pid" -o args= 2>/dev/null || true)
     if [[ "$args" != *"pw-record"* ]]; then
         rm -f "$PID_FILE"
+        set_state "idle"
         return 1
     fi
 
@@ -115,12 +130,7 @@ has_valid_audio() {
 
 transcribe_audio() {
     if [[ -z "${GROQ_API_KEY:-}" ]]; then
-        notify "❌ GROQ_API_KEY is not set." "critical"
-        return 1
-    fi
-
-    if [[ "$GROQ_RESPONSE_FORMAT" != "text" ]] && ! command -v jq >/dev/null 2>&1; then
-        notify "❌ jq is required when response_format is not 'text'." "critical"
+        notify_error "GROQ_API_KEY is not set."
         return 1
     fi
 
@@ -136,7 +146,7 @@ transcribe_audio() {
     form_args=(
         -F "file=@$upload_file"
         -F "model=$GROQ_MODEL"
-        -F "response_format=$GROQ_RESPONSE_FORMAT"
+        -F "response_format=text"
         -F "temperature=$GROQ_TEMPERATURE"
     )
 
@@ -149,7 +159,7 @@ transcribe_audio() {
         form_args+=( -F "prompt=$GROQ_PROMPT" )
     fi
 
-    local response http_code
+    local response
     if ! response=$(curl --silent --show-error --fail \
         --connect-timeout "$CURL_CONNECT_TIMEOUT" \
         --max-time "$CURL_MAX_TIME" \
@@ -159,13 +169,13 @@ transcribe_audio() {
         -H "Authorization: Bearer $GROQ_API_KEY" \
         "${form_args[@]}" 2>&1); then
         if [[ "$response" == *"timed out"* || "$response" == *"timeout"* ]]; then
-            notify "❌ Groq API timed out. Check your connection." "critical"
+            notify_error "Groq API timed out. Check your connection."
         elif [[ "$response" == *"401"* || "$response" == *"Unauthorized"* ]]; then
-            notify "❌ Groq API auth failed. Check GROQ_API_KEY." "critical"
+            notify_error "Groq API auth failed. Check GROQ_API_KEY."
         elif [[ "$response" == *"429"* ]]; then
-            notify "❌ Groq API rate limited. Try again shortly." "critical"
+            notify_error "Groq API rate limited. Try again shortly."
         else
-            notify "❌ Groq transcription request failed." "critical"
+            notify_error "Groq transcription request failed."
         fi
         rm -f "$FLAC_FILE"
         return 1
@@ -173,41 +183,98 @@ transcribe_audio() {
 
     rm -f "$FLAC_FILE"
 
-    if [[ "$GROQ_RESPONSE_FORMAT" == "text" ]]; then
-        printf '%s\n' "$response" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
-        return 0
+    printf '%s\n' "$response" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+paste_shortcuts_once() {
+    ydotool key 29:1 42:1 47:1 47:0 42:0 29:0 2>/dev/null && return 0
+    ydotool key 29:1 47:1 47:0 29:0 2>/dev/null && return 0
+    ydotool key 42:1 110:1 110:0 42:0 2>/dev/null && return 0
+
+    if command -v wtype >/dev/null 2>&1; then
+        wtype -M ctrl v -m ctrl 2>/dev/null && return 0
+        wtype -M shift Insert -m shift 2>/dev/null && return 0
     fi
 
-    printf '%s\n' "$response" | jq -r '.text // empty'
+    return 1
 }
 
 paste_clipboard_with_fallback() {
-    local pasted=1
+    local attempts="$PASTE_ATTEMPTS"
 
-    # Common terminal paste shortcut
-    if ydotool key 29:1 42:1 47:1 47:0 42:0 29:0 2>/dev/null; then
-        pasted=0
-    # Common GUI paste shortcut
-    elif ydotool key 29:1 47:1 47:0 29:0 2>/dev/null; then
-        pasted=0
-    else
-        # Fallback for apps that prefer Shift+Insert
-        if ydotool key 42:1 110:1 110:0 42:0 2>/dev/null; then
-            pasted=0
+    for ((i = 1; i <= attempts; i++)); do
+        if paste_shortcuts_once; then
+            return 0
+        fi
+        sleep "$PASTE_RETRY_DELAY"
+    done
+
+    return 1
+}
+
+type_text_fallback() {
+    local text="$1"
+
+    if command -v wtype >/dev/null 2>&1; then
+        if wtype "$text" 2>/dev/null; then
+            return 0
         fi
     fi
 
-    if [[ "$pasted" -ne 0 ]]; then
-        notify "📋 Copied to clipboard. Press Ctrl+V to paste." "low"
+    if command -v ydotool >/dev/null 2>&1; then
+        if ydotool type -- "$text" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+is_gnome_text_editor_focused() {
+    [[ "${XDG_CURRENT_DESKTOP:-}" == *"GNOME"* ]] || return 1
+    command -v gdbus >/dev/null 2>&1 || return 1
+
+    local out
+    if ! out=$(gdbus call --session \
+        --dest org.gnome.Shell \
+        --object-path /org/gnome/Shell \
+        --method org.gnome.Shell.Eval \
+        '(() => { const w = global.display.get_focus_window(); return w ? w.get_wm_class() : ""; })()' \
+        2>/dev/null); then
         return 1
     fi
 
-    return 0
+    [[ "$out" == *"org.gnome.TextEditor"* ]]
+}
+
+insert_text() {
+    local text="$1"
+
+    echo -n "$text" | wl-copy 200>&-
+    sleep "$PASTE_INITIAL_DELAY"
+
+    if is_gnome_text_editor_focused; then
+        if type_text_fallback "$text"; then
+            return 0
+        fi
+    fi
+
+    if paste_clipboard_with_fallback; then
+        return 0
+    fi
+
+    if type_text_fallback "$text"; then
+        return 0
+    fi
+
+    notify_error "Auto-insert failed. Text was copied to clipboard. Press Ctrl+V to paste."
+    return 1
 }
 
 start_recording() {
     if is_recording; then
-        notify "Already recording..." "low"
+        echo "Already recording..." >&2
+        set_state "recording"
         return 1
     fi
 
@@ -230,17 +297,19 @@ start_recording() {
     sleep 0.15
     if ! is_recording; then
         rm -f "$PID_FILE"
-        notify "❌ Failed to start recording." "critical"
+        notify_error "Failed to start recording."
+        set_state "idle"
         return 1
     fi
 
-    notify "🎙️ Recording started... Press hotkey again to stop."
+    set_state "recording"
     echo "Recording started (PID: $(cat "$PID_FILE"))"
 }
 
 stop_recording() {
     if ! is_recording; then
-        notify "Not currently recording." "low"
+        notify_error "Not currently recording."
+        set_state "idle"
         return 1
     fi
 
@@ -254,49 +323,36 @@ stop_recording() {
 
     # Check if audio file exists and has content
     if ! has_valid_audio; then
-        notify "⚠️ No audio recorded." "critical"
+        notify_error "No audio recorded."
+        set_state "idle"
         return 1
     fi
 
-    notify "⏳ Transcribing..."
+    set_state "transcribing"
 
     # Transcribe with Groq API
     local text
-    text=$(transcribe_audio)
+    if ! text=$(transcribe_audio); then
+        rm -f "$AUDIO_FILE"
+        set_state "idle"
+        return 1
+    fi
 
     # Clean up audio file
     rm -f "$AUDIO_FILE"
 
     if [[ -z "$text" ]]; then
-        notify "⚠️ No speech detected." "low"
+        notify_error "No speech detected."
+        set_state "idle"
         return 1
     fi
 
     echo "Transcribed: $text"
-
-    # Type the text into the focused window using ydotool
-    # Falls back to clipboard paste if ydotool type fails
-    sleep 0.1
-    if ! ydotool type --key-delay 2 -- "$text" 2>/dev/null; then
-        echo -n "$text" | wl-copy 200>&-
-        sleep 0.1
-        paste_clipboard_with_fallback || true
-        notify "✅ Done (clipboard fallback): ${text:0:50}..."
-        return 0
-    fi
-
-    notify "✅ Done: ${text:0:50}..."
+    insert_text "$text" || true
+    set_state "idle"
 }
 
 toggle() {
-    # Use a lock file to prevent race conditions with rapid key presses
-    exec 200>"$LOCK_FILE"
-    flock -n 200 || {
-        notify "⏳ Previous dictation action is still finishing." "low"
-        echo "Another instance is running"
-        exit 1
-    }
-
     if is_recording; then
         stop_recording
     else
@@ -304,104 +360,58 @@ toggle() {
     fi
 }
 
-toggle_clipboard() {
+with_lock() {
     exec 200>"$LOCK_FILE"
     flock -n 200 || {
-        notify "⏳ Previous dictation action is still finishing." "low"
-        echo "Another instance is running"
+        echo "Previous dictation action is still finishing." >&2
+        echo "Another instance is running" >&2
         exit 1
     }
 
-    if is_recording; then
-        stop_recording_clipboard
-    else
-        start_recording
-    fi
+    "$@"
 }
 
 show_status() {
     if is_recording; then
         echo "Recording (PID: $(cat "$PID_FILE"))"
-    else
+        return 0
+    fi
+
+    if [[ ! -f "$STATE_FILE" ]]; then
+        set_state "idle"
         echo "Idle"
-    fi
-}
-
-# --- Clipboard fallback mode --------------------------------------------------
-# If ydotool doesn't work well, you can use this instead.
-# It copies text to clipboard and pastes with Ctrl+V.
-
-stop_recording_clipboard() {
-    if ! is_recording; then
-        notify "Not currently recording." "low"
-        return 1
+        return 0
     fi
 
-    local pid
-    pid=$(cat "$PID_FILE")
-
-    stop_capture_process "$pid"
-    wait "$pid" 2>/dev/null || true
-    rm -f "$PID_FILE"
-
-    if ! has_valid_audio; then
-        notify "⚠️ No audio recorded." "critical"
-        return 1
+    if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo "idle")" == "transcribing" ]]; then
+        echo "Transcribing"
+        return 0
     fi
 
-    notify "⏳ Transcribing..."
-
-    local text
-    text=$(transcribe_audio)
-
-    rm -f "$AUDIO_FILE"
-
-    if [[ -z "$text" ]]; then
-        notify "⚠️ No speech detected." "low"
-        return 1
-    fi
-
-    # Copy to clipboard and paste
-    echo -n "$text" | wl-copy 200>&-
-    sleep 0.1
-    paste_clipboard_with_fallback || true
-
-    notify "✅ Done: ${text:0:50}..."
-}
-
-# --- Push-to-talk mode -------------------------------------------------------
-# ptt-start: begin recording on key press
-# ptt-stop: stop recording + paste on key release
-
-ptt_start() {
-    start_recording
-}
-
-ptt_stop() {
-    stop_recording_clipboard
+    echo "Idle"
 }
 
 # --- Main ---------------------------------------------------------------------
 
 case "${1:-toggle}" in
-    start)          start_recording ;;
-    stop)           stop_recording ;;
-    stop-clipboard) stop_recording_clipboard ;;
-    ptt-start)      ptt_start ;;
-    ptt-stop)       ptt_stop ;;
-    toggle)         toggle ;;
-    toggle-clipboard) toggle_clipboard ;;
+    start)          with_lock start_recording ;;
+    stop)           with_lock stop_recording ;;
+    toggle)         with_lock toggle ;;
     status)         show_status ;;
     *)
-        echo "Usage: $(basename "$0") {toggle|toggle-clipboard|start|stop|stop-clipboard|ptt-start|ptt-stop|status}"
+        echo "Usage: $(basename "$0") {toggle|start|stop|status}"
+        echo ""
+        echo "Environment variables:"
+        echo "  WHISPER_NOTIFY_ON_ERROR=1|0"
+        echo "  WHISPER_ERROR_NOTIFY_TIMEOUT=<milliseconds>"
+        echo "  WHISPER_PASTE_INITIAL_DELAY=<seconds>"
+        echo "  WHISPER_PASTE_RETRY_DELAY=<seconds>"
+        echo "  WHISPER_PASTE_ATTEMPTS=<count>"
+        echo "  WHISPER_STATE_FILE=<path>"
         echo ""
         echo "  toggle          Start or stop recording (default, bind to hotkey)"
-        echo "  toggle-clipboard Start/stop and paste via clipboard (more robust)"
         echo "  start           Start recording"
-        echo "  stop            Stop and transcribe (types via ydotool)"
-        echo "  stop-clipboard  Stop and transcribe (pastes via clipboard)"
-        echo "  ptt-start       Push-to-talk start (bind to key press)"
-        echo "  ptt-stop        Push-to-talk stop + paste (bind to key release)"
+        echo "  stop            Stop and transcribe"
         echo "  status          Show current state"
         exit 1
         ;;

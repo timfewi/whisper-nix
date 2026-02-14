@@ -1,13 +1,13 @@
 # Whisper Dictate (NixOS + Groq API)
 
-**Fast, free, and private voice-to-text for NixOS.** Dictate into any app at the press of a hotkey — transcription comes back in under a second, powered by Groq's free-tier Whisper API. No paid subscription, no cloud lock-in, no background daemon eating your RAM.
+**Fast, free, and private voice-to-text for NixOS.** Dictate into any app with a hotkey and get transcription back in seconds, powered by Groq’s free-tier Whisper API. No paid subscription, no cloud lock-in, no heavy background service.
 
-- **Lightning fast** — audio is compressed before upload; results stream back in ~500ms
-- **Free to use** — runs on Groq's generous free API tier (no credit card required)
-- **20+ languages with translation** — speak in any supported language (e.g. German) and get the transcription in your configured target language (e.g. English). Set `WHISPER_LANG="en"` and Whisper translates your speech into English text, no matter what language you speak
-- **Pure NixOS** — single `configuration.nix` import, no Home Manager needed
-- **Wayland-native** — uses PipeWire + ydotool; works on GNOME, Hyprland, Sway, etc.
-- **Reliable** — automatic clipboard fallback, retry on network errors, actionable notifications
+- **Lightning fast** — WAV is compressed before upload for lower latency and faster responses
+- **Free to use** — built around Groq’s generous free API tier (no credit card required)
+- **20+ languages with translation** — speak in supported languages and transcribe into your configured target language (for example, set `WHISPER_LANG="en"` to get English output)
+- **Pure NixOS** — single `configuration.nix` import, no Home Manager required
+- **Wayland-native** — built on PipeWire + ydotool; works on GNOME, Hyprland, Sway, and similar desktops
+- **Reliable** — adaptive insertion (GNOME Text Editor type-first, other apps paste-first), retry on network errors, and error-only popups
 
 ## 1) Import module in configuration.nix
 
@@ -39,7 +39,7 @@ sudo nixos-rebuild switch
 Settings → Keyboard → Custom Shortcuts
 
 - Name: `whisper-dictate-toggle`
-- Command: `whisper-dictate toggle-clipboard`
+- Command: `whisper-dictate toggle`
 - Shortcut: `Super + D`
 
 ## 5) First test
@@ -47,11 +47,28 @@ Settings → Keyboard → Custom Shortcuts
 ```bash
 whisper-dictate start
 # speak for 3-5 seconds
-whisper-dictate stop-clipboard
+whisper-dictate stop
 whisper-dictate status
 ```
 
-Expected: status returns `Idle` and text is pasted (or copied to clipboard with notification fallback).
+Expected: status returns `Idle` and text is inserted automatically.
+
+Insertion behavior is now fixed (no mode switching):
+
+- GNOME Text Editor focused → type-first insertion
+- Other windows → paste-first insertion
+- If both fail → text remains in clipboard and an error popup is shown
+
+## Visual feedback (hybrid)
+
+- Normal operation is silent (no popup spam)
+- Errors show a desktop popup (`notify-send`) so users understand what failed
+- Runtime state is written to `$XDG_RUNTIME_DIR/whisper-dictate.state` with values:
+  - `idle`
+  - `recording`
+  - `transcribing`
+
+If you have a panel/icon integration, read this state file to show the current mode.
 
 ## 6) Environment variables
 
@@ -59,9 +76,13 @@ Configured by module:
 
 - `GROQ_API_URL=https://api.groq.com/openai/v1/audio/transcriptions`
 - `GROQ_MODEL=whisper-large-v3-turbo`
-- `GROQ_RESPONSE_FORMAT=text`
 - `GROQ_TEMPERATURE=0`
 - `WHISPER_LANG=en`
+- `WHISPER_NOTIFY_ON_ERROR=1` (show only failure notifications)
+- `WHISPER_ERROR_NOTIFY_TIMEOUT=2200` (milliseconds)
+- `WHISPER_PASTE_INITIAL_DELAY=0.45` (seconds before first paste try)
+- `WHISPER_PASTE_RETRY_DELAY=0.12` (seconds between retry actions)
+- `WHISPER_PASTE_ATTEMPTS=2` (small retry batch)
 - `YDOTOOL_SOCKET=/run/ydotoold/socket`
 
 Required from you:
@@ -75,6 +96,7 @@ Required from you:
 - Check daemon: `sudo systemctl status ydotoold`
 - API timeout → check internet connection; curl retries automatically (2x)
 - Ensure your user is in the `input` group: `sudo usermod -aG input $USER` then re-login
+- GNOME Text Editor behavior → insertion is type-first automatically when GNOME Text Editor is focused; no mode switch needed.
 
 ## 8) Using on other Linux distros (Ubuntu, Fedora, Arch, etc.)
 
@@ -85,9 +107,8 @@ The shell script works standalone on any Wayland Linux distro. Just install the 
 | `pw-record` | `pipewire` | `pipewire` | `pipewire` |
 | `ydotool` + `ydotoold` | `ydotool` | `ydotool` | `ydotool` |
 | `wl-copy` | `wl-clipboard` | `wl-clipboard` | `wl-clipboard` |
-| `notify-send` | `libnotify-bin` | `libnotify` | `libnotify` |
+| `notify-send` (error popups) | `libnotify-bin` | `libnotify` | `libnotify` |
 | `curl` | `curl` | `curl` | `curl` |
-| `jq` | `jq` | `jq` | `jq` |
 | `flac` | `flac` | `flac` | `flac` |
 
 Then:
@@ -102,7 +123,7 @@ export WHISPER_LANG="en"
 export YDOTOOL_SOCKET="/run/ydotoold/socket"
 
 # 3. Run directly
-./whisper-dictate.sh toggle-clipboard
+./whisper-dictate.sh toggle
 ```
 
 Bind the toggle command to a hotkey in your desktop environment's settings.

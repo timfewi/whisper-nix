@@ -1,4 +1,4 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, ... }:
 
 # =============================================================================
 # whisper-dictate.nix - NixOS module for voice-to-text dictation
@@ -16,11 +16,11 @@ in
   # --- System packages --------------------------------------------------------
   environment.systemPackages = with pkgs; [
     # Core dependencies
-    jq                   # Parse Groq JSON response (when format=json)
     ydotool              # Simulate keyboard input on Wayland
+    wtype                # Virtual-keyboard key simulation (paste fallback)
     pipewire             # Audio capture (pw-record)
     wl-clipboard         # Clipboard support (fallback mode)
-    libnotify            # Desktop notifications (notify-send)
+    libnotify            # Error popups only (notify-send)
     curl                 # Groq API requests
     flac                 # Compress WAV→FLAC before upload
 
@@ -55,8 +55,14 @@ in
     WHISPER_LANG = "en";
     GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
     GROQ_MODEL = "whisper-large-v3-turbo";
-    GROQ_RESPONSE_FORMAT = "text";
     GROQ_TEMPERATURE = "0";
+    # Hybrid feedback: normal flow is silent; only errors show popups.
+    WHISPER_NOTIFY_ON_ERROR = "1";
+    WHISPER_ERROR_NOTIFY_TIMEOUT = "2200";
+    # Paste pacing for better focus/app readiness.
+    WHISPER_PASTE_INITIAL_DELAY = "0.45";
+    WHISPER_PASTE_RETRY_DELAY = "0.12";
+    WHISPER_PASTE_ATTEMPTS = "2";
     # ydotool socket path
     YDOTOOL_SOCKET = "/run/ydotoold/socket";
   };
