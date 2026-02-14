@@ -184,7 +184,11 @@ transcribe_audio() {
 paste_clipboard_with_fallback() {
     local pasted=1
 
-    if ydotool key 29:1 47:1 47:0 29:0 2>/dev/null; then
+    # Common terminal paste shortcut
+    if ydotool key 29:1 42:1 47:1 47:0 42:0 29:0 2>/dev/null; then
+        pasted=0
+    # Common GUI paste shortcut
+    elif ydotool key 29:1 47:1 47:0 29:0 2>/dev/null; then
         pasted=0
     else
         # Fallback for apps that prefer Shift+Insert

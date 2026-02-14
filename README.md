@@ -72,7 +72,6 @@ Required from you:
 
 - `GROQ_API_KEY is not set` → export key in `~/.zshrc` and restart shell
 - `Not currently recording` on stop → run start first, then stop
-- No paste in some apps → use clipboard manually with `Ctrl+V`
 - Check daemon: `sudo systemctl status ydotoold`
 - API timeout → check internet connection; curl retries automatically (2x)
 - Ensure your user is in the `input` group: `sudo usermod -aG input $USER` then re-login
