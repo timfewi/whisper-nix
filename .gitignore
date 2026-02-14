@@ -1,0 +1,14 @@
+# Secrets and local env
+.env
+.env.*
+*.key
+*.pem
+
+# Editor / OS
+.vscode/
+.DS_Store
+
+# Runtime artifacts
+*.pid
+*.wav
+*.log

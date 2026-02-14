@@ -55,8 +55,8 @@ in
   # --- Permissions for ydotool ------------------------------------------------
   # Allow users in the "input" group to use ydotool
   users.groups.input = {};
-  # Add your user to the input group (replace "tim" with your username)
-  # users.users.tim.extraGroups = [ "input" ];
+  # Add your user to the input group (replace "<your-user>" with your username)
+  # users.users.<your-user>.extraGroups = [ "input" ];
 
   # udev rule to allow input group access to uinput
   services.udev.extraRules = ''

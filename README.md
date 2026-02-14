@@ -12,7 +12,7 @@ This setup is **configuration.nix only** (no Home Manager).
 
 ```nix
 imports = [
-  /home/<user>/projects/wisper-cpp-nix/whisper-dictate.nix
+  /home/<user>/projects/whisper-nix/whisper-dictate.nix
 ];
 ```
 
