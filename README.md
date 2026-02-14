@@ -1,7 +1,13 @@
 # Whisper Dictate (NixOS + Groq API)
 
-Whisper Dictate is a lightweight NixOS module and shell script that records your microphone on GNOME/Wayland, sends audio to Groq Whisper for transcription, and inserts the text into your focused app.
-You can expect a configuration.nix-only setup (no Home Manager), hotkey-driven start/stop dictation, and practical fallback behavior when direct paste is unavailable.
+**Fast, free, and private voice-to-text for NixOS.** Dictate into any app at the press of a hotkey — transcription comes back in under a second, powered by Groq's free-tier Whisper API. No paid subscription, no cloud lock-in, no background daemon eating your RAM.
+
+- **Lightning fast** — audio is compressed before upload; results stream back in ~500ms
+- **Free to use** — runs on Groq's generous free API tier (no credit card required)
+- **20+ languages with translation** — speak in any supported language (e.g. German) and get the transcription in your configured target language (e.g. English). Set `WHISPER_LANG="en"` and Whisper translates your speech into English text, no matter what language you speak
+- **Pure NixOS** — single `configuration.nix` import, no Home Manager needed
+- **Wayland-native** — uses PipeWire + ydotool; works on GNOME, Hyprland, Sway, etc.
+- **Reliable** — automatic clipboard fallback, retry on network errors, actionable notifications
 
 ## 1) Import module in configuration.nix
 
@@ -53,7 +59,7 @@ Configured by module:
 
 - `GROQ_API_URL=https://api.groq.com/openai/v1/audio/transcriptions`
 - `GROQ_MODEL=whisper-large-v3-turbo`
-- `GROQ_RESPONSE_FORMAT=json`
+- `GROQ_RESPONSE_FORMAT=text`
 - `GROQ_TEMPERATURE=0`
 - `WHISPER_LANG=en`
 - `YDOTOOL_SOCKET=/run/ydotoold/socket`
@@ -67,4 +73,6 @@ Required from you:
 - `GROQ_API_KEY is not set` → export key in `~/.zshrc` and restart shell
 - `Not currently recording` on stop → run start first, then stop
 - No paste in some apps → use clipboard manually with `Ctrl+V`
-- Check daemon: `systemctl status ydotoold`
+- Check daemon: `sudo systemctl status ydotoold`
+- API timeout → check internet connection; curl retries automatically (2x)
+- Ensure your user is in the `input` group: `sudo usermod -aG input $USER` then re-login

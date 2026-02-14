@@ -14,13 +14,20 @@
 set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
-# Language for transcription (de = German, en = English, auto = auto-detect)
-LANGUAGE="${WHISPER_LANG:-de}"
+# Language for transcription (ISO 639-1 code).
+# Common codes: en (English), de (German), fr (French), es (Spanish),
+#   it (Italian), pt (Portuguese), nl (Dutch), pl (Polish), ja (Japanese),
+#   zh (Chinese), ko (Korean), ru (Russian), ar (Arabic), hi (Hindi),
+#   sv (Swedish), uk (Ukrainian), tr (Turkish), cs (Czech), da (Danish),
+#   fi (Finnish). Full list: https://github.com/openai/whisper#available-models-and-languages
+# To change: set WHISPER_LANG in your environment or in whisper-dictate.nix.
+# To auto-detect language, set WHISPER_LANG="auto" (slightly slower).
+LANGUAGE="${WHISPER_LANG:-en}"
 
 # Groq API configuration
 GROQ_API_URL="${GROQ_API_URL:-https://api.groq.com/openai/v1/audio/transcriptions}"
 GROQ_MODEL="${GROQ_MODEL:-whisper-large-v3-turbo}"
-GROQ_RESPONSE_FORMAT="${GROQ_RESPONSE_FORMAT:-json}"
+GROQ_RESPONSE_FORMAT="${GROQ_RESPONSE_FORMAT:-text}"
 GROQ_TEMPERATURE="${GROQ_TEMPERATURE:-0}"
 GROQ_PROMPT="${GROQ_PROMPT:-}"
 
@@ -31,8 +38,14 @@ NOTIFY_TIMEOUT=2000
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 PID_FILE="$RUNTIME_DIR/whisper-dictate.pid"
 AUDIO_FILE="$RUNTIME_DIR/whisper-dictate.wav"
+FLAC_FILE="$RUNTIME_DIR/whisper-dictate.flac"
 LOCK_FILE="$RUNTIME_DIR/whisper-dictate.lock"
 MIN_WAV_BYTES=128
+
+# Curl timeout/retry settings
+CURL_CONNECT_TIMEOUT=5
+CURL_MAX_TIME=30
+CURL_RETRIES=2
 
 if [[ -n "${YDOTOOL_SOCKET:-}" ]] && [[ -S "$YDOTOOL_SOCKET" ]]; then
     export YDOTOOL_SOCKET
@@ -106,32 +119,59 @@ transcribe_audio() {
         return 1
     fi
 
-    if ! command -v jq >/dev/null 2>&1; then
-        notify "❌ jq is required for cloud transcription parsing." "critical"
+    if [[ "$GROQ_RESPONSE_FORMAT" != "text" ]] && ! command -v jq >/dev/null 2>&1; then
+        notify "❌ jq is required when response_format is not 'text'." "critical"
         return 1
+    fi
+
+    # Compress WAV → FLAC for faster upload (5-15x smaller)
+    local upload_file="$AUDIO_FILE"
+    if command -v flac >/dev/null 2>&1; then
+        if flac --silent --force "$AUDIO_FILE" -o "$FLAC_FILE" 2>/dev/null; then
+            upload_file="$FLAC_FILE"
+        fi
     fi
 
     local -a form_args
     form_args=(
-        -F "file=@$AUDIO_FILE"
+        -F "file=@$upload_file"
         -F "model=$GROQ_MODEL"
-        -F "language=$LANGUAGE"
         -F "response_format=$GROQ_RESPONSE_FORMAT"
         -F "temperature=$GROQ_TEMPERATURE"
     )
+
+    # Omit language param when set to "auto" so Whisper auto-detects
+    if [[ "$LANGUAGE" != "auto" ]]; then
+        form_args+=( -F "language=$LANGUAGE" )
+    fi
 
     if [[ -n "$GROQ_PROMPT" ]]; then
         form_args+=( -F "prompt=$GROQ_PROMPT" )
     fi
 
-    local response
+    local response http_code
     if ! response=$(curl --silent --show-error --fail \
+        --connect-timeout "$CURL_CONNECT_TIMEOUT" \
+        --max-time "$CURL_MAX_TIME" \
+        --retry "$CURL_RETRIES" \
+        --retry-delay 1 \
         -X POST "$GROQ_API_URL" \
         -H "Authorization: Bearer $GROQ_API_KEY" \
         "${form_args[@]}" 2>&1); then
-        notify "❌ Groq transcription request failed." "critical"
+        if [[ "$response" == *"timed out"* || "$response" == *"timeout"* ]]; then
+            notify "❌ Groq API timed out. Check your connection." "critical"
+        elif [[ "$response" == *"401"* || "$response" == *"Unauthorized"* ]]; then
+            notify "❌ Groq API auth failed. Check GROQ_API_KEY." "critical"
+        elif [[ "$response" == *"429"* ]]; then
+            notify "❌ Groq API rate limited. Try again shortly." "critical"
+        else
+            notify "❌ Groq transcription request failed." "critical"
+        fi
+        rm -f "$FLAC_FILE"
         return 1
     fi
+
+    rm -f "$FLAC_FILE"
 
     if [[ "$GROQ_RESPONSE_FORMAT" == "text" ]]; then
         printf '%s\n' "$response" | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
@@ -231,9 +271,15 @@ stop_recording() {
     echo "Transcribed: $text"
 
     # Type the text into the focused window using ydotool
-    # Small delay to ensure focus is correct
+    # Falls back to clipboard paste if ydotool type fails
     sleep 0.1
-    ydotool type --key-delay 2 -- "$text"
+    if ! ydotool type --key-delay 2 -- "$text" 2>/dev/null; then
+        echo -n "$text" | wl-copy 200>&-
+        sleep 0.1
+        paste_clipboard_with_fallback || true
+        notify "✅ Done (clipboard fallback): ${text:0:50}..."
+        return 0
+    fi
 
     notify "✅ Done: ${text:0:50}..."
 }

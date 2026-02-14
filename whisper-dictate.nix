@@ -16,12 +16,13 @@ in
   # --- System packages --------------------------------------------------------
   environment.systemPackages = with pkgs; [
     # Core dependencies
-    jq                   # Parse Groq JSON response
+    jq                   # Parse Groq JSON response (when format=json)
     ydotool              # Simulate keyboard input on Wayland
     pipewire             # Audio capture (pw-record)
     wl-clipboard         # Clipboard support (fallback mode)
     libnotify            # Desktop notifications (notify-send)
     curl                 # Groq API requests
+    flac                 # Compress WAV→FLAC before upload
 
     # Our scripts
     whisper-dictate
@@ -34,19 +35,27 @@ in
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       RuntimeDirectory = "ydotoold";
-      ExecStart = "${pkgs.ydotool}/bin/ydotoold --socket-path=/run/ydotoold/socket --socket-perm=0666";
+      ExecStart = "${pkgs.ydotool}/bin/ydotoold --socket-path=/run/ydotoold/socket --socket-perm=0660";
+      ExecStartPost = "/run/current-system/sw/bin/chgrp input /run/ydotoold/socket";
       Restart = "on-failure";
-      # Grant access to the current user
-      # The socket will be at /run/ydotoold/socket
+      # Socket restricted to root + input group (0660)
+      # Add your user to the input group for access
     };
   };
 
   # --- Environment variables --------------------------------------------------
   environment.sessionVariables = {
+    # Language for transcription (ISO 639-1 code). Supported languages:
+    #   en = English,  de = German,   fr = French,   es = Spanish,
+    #   it = Italian,  pt = Portuguese, nl = Dutch,   pl = Polish,
+    #   ja = Japanese, zh = Chinese,  ko = Korean,   ru = Russian,
+    #   ar = Arabic,   hi = Hindi,    sv = Swedish,  uk = Ukrainian,
+    #   tr = Turkish,  cs = Czech,    da = Danish,   fi = Finnish
+    # Full list: https://github.com/openai/whisper#available-models-and-languages
     WHISPER_LANG = "en";
     GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
     GROQ_MODEL = "whisper-large-v3-turbo";
-    GROQ_RESPONSE_FORMAT = "json";
+    GROQ_RESPONSE_FORMAT = "text";
     GROQ_TEMPERATURE = "0";
     # ydotool socket path
     YDOTOOL_SOCKET = "/run/ydotoold/socket";
