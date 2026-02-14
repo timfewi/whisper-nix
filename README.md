@@ -76,3 +76,43 @@ Required from you:
 - Check daemon: `sudo systemctl status ydotoold`
 - API timeout → check internet connection; curl retries automatically (2x)
 - Ensure your user is in the `input` group: `sudo usermod -aG input $USER` then re-login
+
+## 8) Using on other Linux distros (Ubuntu, Fedora, Arch, etc.)
+
+The shell script works standalone on any Wayland Linux distro. Just install the dependencies manually:
+
+| Dependency | Ubuntu/Debian | Fedora | Arch |
+|---|---|---|---|
+| `pw-record` | `pipewire` | `pipewire` | `pipewire` |
+| `ydotool` + `ydotoold` | `ydotool` | `ydotool` | `ydotool` |
+| `wl-copy` | `wl-clipboard` | `wl-clipboard` | `wl-clipboard` |
+| `notify-send` | `libnotify-bin` | `libnotify` | `libnotify` |
+| `curl` | `curl` | `curl` | `curl` |
+| `jq` | `jq` | `jq` | `jq` |
+| `flac` | `flac` | `flac` | `flac` |
+
+Then:
+
+```bash
+# 1. Start the ydotool daemon
+sudo ydotoold --socket-path=/run/ydotoold/socket --socket-perm=0660 &
+
+# 2. Set your API key and language
+export GROQ_API_KEY="YOUR_KEY_HERE"
+export WHISPER_LANG="en"
+export YDOTOOL_SOCKET="/run/ydotoold/socket"
+
+# 3. Run directly
+./whisper-dictate.sh toggle-clipboard
+```
+
+Bind the toggle command to a hotkey in your desktop environment's settings.
+
+## 9) Windows & macOS
+
+This tool is **Linux/Wayland-only**. Windows and macOS lack the required components:
+
+- **Windows**: no PipeWire, no ydotool, no wl-clipboard. WSL2 audio passthrough is unreliable. A native port would require a full rewrite using e.g. `ffmpeg` + `AutoHotkey` + PowerShell.
+- **macOS**: would need `sox`/`ffmpeg` instead of `pw-record`, `pbcopy` instead of `wl-clipboard`, and `osascript` instead of `ydotool`.
+
+If there's interest, a cross-platform port could be built — contributions welcome!
