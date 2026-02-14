@@ -1,12 +1,7 @@
 # Whisper Dictate (NixOS + Groq API)
 
-Cloud speech-to-text dictation on Wayland/GNOME using:
-
-- `pw-record` (PipeWire) for microphone capture
-- Groq Speech-to-Text API (`whisper-large-v3-turbo`)
-- `ydotool` for paste into focused window
-
-This setup is **configuration.nix only** (no Home Manager).
+Whisper Dictate is a lightweight NixOS module and shell script that records your microphone on GNOME/Wayland, sends audio to Groq Whisper for transcription, and inserts the text into your focused app.
+You can expect a configuration.nix-only setup (no Home Manager), hotkey-driven start/stop dictation, and practical fallback behavior when direct paste is unavailable.
 
 ## 1) Import module in configuration.nix
 
