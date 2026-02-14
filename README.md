@@ -136,3 +136,15 @@ This tool is **Linux/Wayland-only**. Windows and macOS lack the required compone
 - **macOS**: would need `sox`/`ffmpeg` instead of `pw-record`, `pbcopy` instead of `wl-clipboard`, and `osascript` instead of `ydotool`.
 
 If there's interest, a cross-platform port could be built — contributions welcome!
+
+## License
+
+MIT. See `LICENSE`.
+
+## Contributing
+
+See `CONTRIBUTING.md`.
+
+## Security
+
+See `SECURITY.md` for private vulnerability reporting guidance.
