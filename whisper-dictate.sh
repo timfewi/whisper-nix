@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # =============================================================================
 # whisper-dictate.sh - Voice-to-text dictation for GNOME/Wayland on NixOS
 #
@@ -11,6 +12,7 @@
 # =============================================================================
 
 set -euo pipefail
+umask 077
 
 # --- Configuration -----------------------------------------------------------
 # Language for transcription (ISO 639-1 code, e.g. en, de, fr).
