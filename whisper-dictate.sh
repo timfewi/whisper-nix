@@ -23,6 +23,7 @@ GROQ_API_URL="${GROQ_API_URL:-https://api.groq.com/openai/v1/audio/transcription
 GROQ_MODEL="${GROQ_MODEL:-whisper-large-v3-turbo}"
 GROQ_TEMPERATURE="${GROQ_TEMPERATURE:-0}"
 GROQ_PROMPT="${GROQ_PROMPT:-}"
+GROQ_API_KEY_FILE="${GROQ_API_KEY_FILE:-}"
 
 # Error notification behavior (normal flow stays silent)
 ERROR_NOTIFY_ENABLED="${WHISPER_NOTIFY_ON_ERROR:-1}"
@@ -46,6 +47,11 @@ MIN_WAV_BYTES=128
 CURL_CONNECT_TIMEOUT=5
 CURL_MAX_TIME=30
 CURL_RETRIES=2
+
+if [[ -z "${GROQ_API_KEY:-}" ]] && [[ -n "$GROQ_API_KEY_FILE" ]] && [[ -r "$GROQ_API_KEY_FILE" ]]; then
+    GROQ_API_KEY="$(< "$GROQ_API_KEY_FILE")"
+    export GROQ_API_KEY
+fi
 
 if [[ -n "${YDOTOOL_SOCKET:-}" ]] && [[ -S "$YDOTOOL_SOCKET" ]]; then
     export YDOTOOL_SOCKET
