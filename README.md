@@ -21,7 +21,13 @@ imports = [
 
 Create API key: https://console.groq.com/keys
 
-Add to your shell profile (recommended):
+On NixOS, prefer wiring the runtime secret file through the module:
+
+```nix
+programs.whisperDictate.groqApiKeyFile = "/run/agenix/groq-api-key";
+```
+
+For direct shell usage outside the module, you can still export it manually:
 
 ```bash
 echo 'export GROQ_API_KEY="YOUR_KEY_HERE"' >> ~/.zshrc
@@ -87,11 +93,11 @@ Configured by module:
 
 Required from you:
 
-- `GROQ_API_KEY`
+- `GROQ_API_KEY` or `programs.whisperDictate.groqApiKeyFile`
 
 ## 7) Troubleshooting
 
-- `GROQ_API_KEY is not set` → export key in `~/.zshrc` and restart shell
+- `GROQ_API_KEY is not set` → set `programs.whisperDictate.groqApiKeyFile` or export the key in your shell before running the script directly
 - `Not currently recording` on stop → run start first, then stop
 - Check daemon: `sudo systemctl status ydotoold`
 - API timeout → check internet connection; curl retries automatically (2x)
