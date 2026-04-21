@@ -12,3 +12,6 @@
 *.pid
 *.wav
 *.log
+
+# Local future planning notes
+.github/plans/future-crossplatform.plan.md
