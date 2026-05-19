@@ -18,12 +18,16 @@ umask 077
 # Language for transcription (ISO 639-1 code, e.g. en, de, fr).
 LANGUAGE="${WHISPER_LANG:-en}"
 
-# Groq API configuration
-GROQ_API_URL="${GROQ_API_URL:-https://api.groq.com/openai/v1/audio/transcriptions}"
-GROQ_MODEL="${GROQ_MODEL:-whisper-large-v3-turbo}"
-GROQ_TEMPERATURE="${GROQ_TEMPERATURE:-0}"
-GROQ_PROMPT="${GROQ_PROMPT:-}"
-GROQ_API_KEY_FILE="${GROQ_API_KEY_FILE:-}"
+# OpenRouter API configuration
+OPENROUTER_API_URL="${OPENROUTER_API_URL:-https://openrouter.ai/api/v1/audio/transcriptions}"
+OPENROUTER_MODEL="${OPENROUTER_MODEL:-qwen/qwen3-asr-flash-2026-02-10}"
+OPENROUTER_TEMPERATURE="${OPENROUTER_TEMPERATURE:-0}"
+OPENROUTER_API_KEY_FILE="${OPENROUTER_API_KEY_FILE:-}"
+
+# GROQ_API_URL="${GROQ_API_URL:-https://api.groq.com/openai/v1/audio/transcriptions}"
+# GROQ_MODEL="${GROQ_MODEL:-whisper-large-v3-turbo}"
+# GROQ_TEMPERATURE="${GROQ_TEMPERATURE:-0}"
+# GROQ_API_KEY_FILE="${GROQ_API_KEY_FILE:-}"
 
 # Error notification behavior (normal flow stays silent)
 ERROR_NOTIFY_ENABLED="${WHISPER_NOTIFY_ON_ERROR:-1}"
@@ -137,8 +141,22 @@ has_valid_audio() {
 }
 
 transcribe_audio() {
-    if [[ -z "${GROQ_API_KEY:-}" ]]; then
-        notify_error "GROQ_API_KEY is not set."
+    # Check for OpenRouter configuration first
+    local api_key="${OPENROUTER_API_KEY:-}"
+    local api_url="${OPENROUTER_API_URL:-}"
+    local model="${OPENROUTER_MODEL:-}"
+    local temp="${OPENROUTER_TEMPERATURE:-}"
+
+    # Fallback to Groq if OpenRouter is not configured
+    if [[ -z "$api_key" ]]; then
+        api_key="${GROQ_API_KEY:-}"
+        api_url="${GROQ_API_URL:-}"
+        model="${GROQ_MODEL:-}"
+        temp="${GROQ_TEMPERATURE:-}"
+    fi
+
+    if [[ -z "$api_key" ]]; then
+        notify_error "Neither OPENROUTER_API_KEY nor GROQ_API_KEY is set."
         return 1
     fi
 
@@ -153,9 +171,9 @@ transcribe_audio() {
     local -a form_args
     form_args=(
         -F "file=@$upload_file"
-        -F "model=$GROQ_MODEL"
+        -F "model=$model"
         -F "response_format=text"
-        -F "temperature=$GROQ_TEMPERATURE"
+        -F "temperature=$temp"
     )
 
     # Omit language param when set to "auto" so Whisper auto-detects
@@ -163,7 +181,8 @@ transcribe_audio() {
         form_args+=( -F "language=$LANGUAGE" )
     fi
 
-    if [[ -n "$GROQ_PROMPT" ]]; then
+    # Include prompt if set
+    if [[ -n "${GROQ_PROMPT:-}" ]]; then
         form_args+=( -F "prompt=$GROQ_PROMPT" )
     fi
 
@@ -173,17 +192,17 @@ transcribe_audio() {
         --max-time "$CURL_MAX_TIME" \
         --retry "$CURL_RETRIES" \
         --retry-delay 1 \
-        -X POST "$GROQ_API_URL" \
-        -H "Authorization: Bearer $GROQ_API_KEY" \
+        -X POST "$api_url" \
+        -H "Authorization: Bearer $api_key" \
         "${form_args[@]}" 2>&1); then
         if [[ "$response" == *"timed out"* || "$response" == *"timeout"* ]]; then
-            notify_error "Groq API timed out. Check your connection."
+            notify_error "API timed out. Check your connection."
         elif [[ "$response" == *"401"* || "$response" == *"Unauthorized"* ]]; then
-            notify_error "Groq API auth failed. Check GROQ_API_KEY."
+            notify_error "API auth failed. Check your API key."
         elif [[ "$response" == *"429"* ]]; then
-            notify_error "Groq API rate limited. Try again shortly."
+            notify_error "API rate limited. Try again shortly."
         else
-            notify_error "Groq transcription request failed."
+            notify_error "Transcription request failed."
         fi
         rm -f "$FLAC_FILE"
         return 1
